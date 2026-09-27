@@ -117,6 +117,10 @@ textarea{width:100%;min-height:140px;border:1px solid var(--border);background:v
 .steps{counter-reset:s;list-style:none;padding:0;margin:0}
 .steps li{counter-increment:s;display:grid;grid-template-columns:30px 1fr;gap:10px;padding:8px 0}
 .steps li::before{content:counter(s);width:26px;height:26px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:700;font-size:13px}
+/* tap-to-speak */
+.say{cursor:pointer;-webkit-tap-highlight-color:transparent;border-radius:4px;transition:background .2s}
+@media (hover:hover){.say:hover{text-decoration:underline dotted;text-underline-offset:3px}}
+.say.saying{background:var(--warn-soft);box-shadow:0 0 0 2px var(--warn)}
 footer{color:var(--muted);font-size:12px;margin-top:32px;text-align:center}
 @media (max-width:560px){
   .card{padding:14px}
@@ -134,6 +138,7 @@ footer{color:var(--muted);font-size:12px;margin-top:32px;text-align:center}
       <div>
         <h1>🇵🇹 Português Europeu — Курс A2</h1>
         <div class="sub">12 недель · MQP · Conjuntivo · Passiva · CIPLE · Метод Фейнмана</div>
+        <div class="hint">🔊 Нажмите на любой португальский текст, чтобы услышать его (pt-PT)</div>
       </div>
       <button class="theme-btn" id="themeBtn" aria-label="Сменить тему">◐ Тема</button>
     </div>
@@ -1141,6 +1146,46 @@ W.push({
   }
 });
 
+/* ---------- speech (tap-to-speak, pt-PT) ---------- */
+const SAY_SEL = '.ex b, .content i, .content em, .content b, td, .timeline b, .bub, .q p, .opts label, .week-title';
+const CYR = /[А-Яа-яЁё]/;
+function pickVoice(){
+  try{
+    const vs = speechSynthesis.getVoices() || [];
+    return vs.find(v=>v.lang==='pt-PT') || vs.find(v=>/^pt[-_]PT/i.test(v.lang)) || vs.find(v=>/^pt/i.test(v.lang)) || null;
+  }catch(e){ return null; }
+}
+function utter(text){
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'pt-PT'; u.rate = .9;
+  const v = pickVoice(); if (v) u.voice = v;
+  return u;
+}
+function speak(text){
+  if (!('speechSynthesis' in window) || !text) return;
+  try{ speechSynthesis.cancel(); speechSynthesis.speak(utter(text)); }catch(e){}
+}
+function sayText(el){
+  let t = el.matches('.bub') ? (el.querySelector('.pt')||el).textContent
+        : el.matches('.week-title') ? el.textContent.replace(/^Неделя\s*\d+\.\s*/,'')
+        : el.textContent;
+  t = t.replace(/\[[^\]]*\]/g,' ')
+       .replace(/\([^)]*[А-Яа-яЁё][^)]*\)/g,' ')
+       .replace(/[«»“”"]/g,'')
+       .replace(/_{2,}/g,' … ')
+       .replace(/[·\/→=+|]/g,', ')
+       .replace(/^\s*\d+[.)]\s*/,'')
+       .replace(/\s+/g,' ').trim();
+  if (!t || CYR.test(t) || !/[A-Za-zÀ-ÿ]/.test(t)) return '';
+  return t;
+}
+function markSpeakable(){
+  document.querySelectorAll('#main '+SAY_SEL.split(',').join(', #main ')).forEach(el=>{
+    if (sayText(el)) el.classList.add('say');
+  });
+}
+if ('speechSynthesis' in window){ try{ speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged = ()=>{}; }catch(e){} }
+
 /* ---------- state ---------- */
 let week = Math.min(Math.max(store.get('week', 0), 0), W.length - 1);
 let tab = store.get('tab', 'plan');
@@ -1192,7 +1237,7 @@ function renderContent(w, key){
 function renderDialog(w){
   const names = {};
   return `${header(w)}<div class="card">
-    <div class="label">Диалог — разыграйте обе роли</div>
+    <div class="label">Диалог — разыграйте обе роли · нажмите на реплику 🔊</div>
     <div class="dlg" id="dlg">${w.dialog.map(([who,pt,ru])=>{
       if(!(who in names)) names[who] = Object.keys(names).length;
       return `<div class="line${names[who]%2?' r':''}"><div class="who">${who}</div><div class="bub"><div class="pt">${pt}</div><div class="ru">${ru}</div></div></div>`;
@@ -1243,10 +1288,19 @@ function render(){
     default: html = renderContent(w, tab);
   }
   $('#main').innerHTML = html;
+  markSpeakable();
 }
 
 /* ---------- events ---------- */
 document.addEventListener('click', (e)=>{
+  const sayEl = e.target.closest('.say');
+  if (sayEl && e.target.tagName !== 'INPUT'){
+    const t = sayText(sayEl);
+    if (t){
+      speak(t);
+      sayEl.classList.add('saying'); setTimeout(()=>sayEl.classList.remove('saying'), 900);
+    }
+  }
   const wb = e.target.closest('[data-w]');
   if (wb){ week = +wb.dataset.w; store.set('week', week); render(); window.scrollTo({top:0}); return; }
   const tb = e.target.closest('[data-t]');
@@ -1257,9 +1311,7 @@ document.addEventListener('click', (e)=>{
   }
   if (e.target.id === 'speak'){
     speechSynthesis.cancel();
-    const voices = speechSynthesis.getVoices();
-    const v = voices.find(v=>v.lang==='pt-PT') || voices.find(v=>/^pt/.test(v.lang));
-    W[week].dialog.forEach(([,pt])=>{ const u = new SpeechSynthesisUtterance(pt); u.lang='pt-PT'; if(v) u.voice=v; u.rate=.95; speechSynthesis.speak(u); });
+    W[week].dialog.forEach(([,pt])=>speechSynthesis.speak(utter(pt)));
   }
   if (e.target.id === 'check') checkTest();
   if (e.target.id === 'reset'){ render(); }
